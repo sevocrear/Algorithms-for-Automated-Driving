@@ -1,6 +1,6 @@
 # Code based on Carla examples, which are authored by
 # Computer Vision Center (CVC) at the Universitat Autonoma de Barcelona (UAB).
-
+# Credits: https://github.com/thomasfermi/Algorithms-for-Automated-Driving
 # How to run:
 # Start a Carla simulation
 # cd into the parent directory of the 'code' directory and run
