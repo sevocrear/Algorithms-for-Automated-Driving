@@ -14,7 +14,7 @@ import pygame
 import numpy as np
 import cv2
 from datetime import datetime
-
+import time 
 
 from ...util.carla_util import (
     carla_vec_to_np_array,
@@ -33,7 +33,7 @@ from .seg_data_util import mkdir_if_not_exist
 
 
 store_files = True
-town_string = "Town03"
+town_string = "Town10HD"
 cg = CameraGeometry(height=1.5,pitch_deg = 5, image_width=1920, image_height= 1080, field_of_view_deg= 100)
 width = cg.image_width
 height = cg.image_height
@@ -41,16 +41,6 @@ height = cg.image_height
 now = datetime.now()
 date_time_string = now.strftime("%m_%d_%Y_%H_%M_%S")
 
-
-def plot_map(m):
-    import matplotlib.pyplot as plt
-
-    wp_list = m.generate_waypoints(2.0)
-    loc_list = np.array(
-        [carla_vec_to_np_array(wp.transform.location) for wp in wp_list]
-    )
-    plt.scatter(loc_list[:, 0], loc_list[:, 1])
-    plt.show()
 
 
 def random_transform_disturbance(transform):
@@ -90,7 +80,6 @@ def get_curvature(polyline):
 def create_lane_lines(
     waypoint, exclude_junctions=True, only_turns=False
 ):
-    # print(str(waypoint.right_lane_marking.type))
     center_list, left_boundary, right_boundary = [], [], []
     for _ in range(60):
         if (
@@ -159,7 +148,7 @@ def save_img(image, path, raw=False):
 
 def save_label_img(lb_left_list, lb_right_list,none_flags_list, path):
     label = np.zeros((height, width, 3))
-    colors = [[100, 100, 100], [200, 200, 200]]
+    colors = [[100, 100, 100], [100, 100, 100]]
     for lb_left, lb_right, idx in zip(lb_left_list, lb_right_list, range(len(none_flags_list))):
         if none_flags_list[idx] == 0:
             for color, lb in zip(colors, [lb_left, lb_right]):
@@ -201,7 +190,7 @@ def main():
     client = carla.Client("localhost", 2000)
     client.set_timeout(60.0)
 
-    client.load_world(town_string)
+    # client.load_world(town_string)
     world = client.get_world()
 
     try:
@@ -220,17 +209,23 @@ def main():
 
         # create a vehicle
         blueprint_library = world.get_blueprint_library()
-
-        vehicle = world.spawn_actor(
-            random.choice(blueprint_library.filter("vehicle.audi.tt")),
+        try:
+            vehicle = world.spawn_actor(
+            random.choice(blueprint_library.filter("vehicle.harley-davidson.low_rider")),
             start_pose,
         )
+        except RuntimeError as e:
+            print(e)
+            print('Try again, please...\n')
+            exit()
+
         actor_list.append(vehicle)
         vehicle.set_simulate_physics(False)
 
         # create camera and attach to vehicle
+        box = vehicle.bounding_box
         cam_rgb_transform = carla.Transform(
-            carla.Location(x=0.5, z=cg.height),
+            carla.Location(x=0.5, y=0, z=cg.height),
             carla.Rotation(pitch=-1 * cg.pitch_deg),
         )
         trafo_matrix_vehicle_to_cam = np.array(
@@ -247,10 +242,17 @@ def main():
         actor_list.append(camera_rgb)
 
         K = get_intrinsic_matrix(fov, width, height)
-        min_jump, max_jump = 5, 10
+        # min_jump, max_jump = 5, 10
 
+        bp = blueprint_library.find('sensor.camera.semantic_segmentation')
+         # camera parameters
+        bp.set_attribute("image_size_x", str(width))
+        bp.set_attribute("image_size_y", str(height))
+        bp.set_attribute("fov", str(fov))
+        camera_semseg = world.spawn_actor(bp, cam_rgb_transform, attach_to=vehicle)
+        actor_list.append(camera_semseg)
         # Create a synchronous mode context.
-        with CarlaSyncMode(world, camera_rgb, fps=30) as sync_mode:
+        with CarlaSyncMode(world, camera_rgb, camera_semseg, fps=30) as sync_mode:
             frame = 0
             while True:
                 if should_quit():
@@ -258,41 +260,46 @@ def main():
                 clock.tick()
 
                 # Advance the simulation and wait for the data.
-                snapshot, image_rgb = sync_mode.tick(timeout=2.0)
+                snapshot, image_rgb, image_semseg = sync_mode.tick(timeout=2.0)
+                image_semseg.convert(carla.ColorConverter.CityScapesPalette)
+                # # Choose the next spawn_waypoint and update the car location.
+                # # ----- change lane with low probability
+                # if np.random.rand() > 0.9:
+                #     shifted = None
+                #     if spawn_waypoint.lane_change == carla.LaneChange.Left:
+                #         shifted = spawn_waypoint.get_left_lane()
+                #     elif spawn_waypoint.lane_change == carla.LaneChange.Right:
+                #         shifted = spawn_waypoint.get_right_lane()
+                #     elif spawn_waypoint.lane_change == carla.LaneChange.Both:
+                #         if np.random.rand() > 0.5:
+                #             shifted = spawn_waypoint.get_right_lane()
+                #         else:
+                #             shifted = spawn_waypoint.get_left_lane()
+                #     if shifted is not None:
+                #         spawn_waypoint = shifted
+                # # ----- jump forwards a random distance
+                # jump = np.random.uniform(min_jump, max_jump)
+                # next_waypoints = spawn_waypoint.next(jump)
+                # if not next_waypoints:
+                #     spawn_waypoint = get_random_spawn_point(m)
+                # else:
+                #     spawn_waypoint = random.choice(next_waypoints)
 
-                # Choose the next spawn_waypoint and update the car location.
-                # ----- change lane with low probability
-                if np.random.rand() > 0.9:
-                    shifted = None
-                    if spawn_waypoint.lane_change == carla.LaneChange.Left:
-                        shifted = spawn_waypoint.get_left_lane()
-                    elif spawn_waypoint.lane_change == carla.LaneChange.Right:
-                        shifted = spawn_waypoint.get_right_lane()
-                    elif spawn_waypoint.lane_change == carla.LaneChange.Both:
-                        if np.random.rand() > 0.5:
-                            shifted = spawn_waypoint.get_right_lane()
-                        else:
-                            shifted = spawn_waypoint.get_left_lane()
-                    if shifted is not None:
-                        spawn_waypoint = shifted
-                # ----- jump forwards a random distance
-                jump = np.random.uniform(min_jump, max_jump)
-                next_waypoints = spawn_waypoint.next(jump)
-                if not next_waypoints:
-                    spawn_waypoint = get_random_spawn_point(m)
-                else:
-                    spawn_waypoint = random.choice(next_waypoints)
+                # # ----- randomly change yaw and lateral position
+                # spawn_transform = random_transform_disturbance(
+                #     spawn_waypoint.transform
+                # )
+                # vehicle.set_transform(spawn_transform)
 
-                # ----- randomly change yaw and lateral position
-                spawn_transform = random_transform_disturbance(
-                    spawn_waypoint.transform
-                )
-                vehicle.set_transform(spawn_transform)
+                # Choose the next waypoint and update the car location.
+                spawn_waypoint = random.choice(spawn_waypoint.next(1.5))
+                vehicle.set_transform(spawn_waypoint.transform)
 
                 # Draw the display.
                 fps = round(1.0 / snapshot.timestamp.delta_seconds)
 
                 draw_image(display, image_rgb)
+                draw_image(display, image_semseg, blend = True)
                 display.blit(
                     font.render(
                         "% 5d FPS (real)" % clock.get_fps(),
@@ -323,6 +330,7 @@ def main():
                 )
 
 
+                st_t = time.time()
                 waypoint = m.get_waypoint(
                     vehicle.get_transform().location,
                     project_to_road=True,
@@ -364,7 +372,7 @@ def main():
                     proj_right_bound_list.append(projected_right_boundary)
                 
                 if none_flags_list.count(1) == len(waypoints):
-                    spawn_waypoint = get_random_spawn_point(m)
+                    # spawn_waypoint = get_random_spawn_point(m)
                     continue
 
                 out_image_counter = 0
@@ -398,27 +406,27 @@ def main():
                                     projected_right_boundary,
                                     4,
                                 )
-                if out_image_counter == len(waypoints):
-                    spawn_waypoint = get_random_spawn_point(m)
-                    continue
+                
+                print(time.time()-st_t,end = " s\n")
+                # if out_image_counter == len(waypoints):
+                    # spawn_waypoint = get_random_spawn_point(m)
+                    # continue
 
-                in_lower_part_of_map = spawn_transform.location.y < 0
-
-                if store_files:
+                if store_files and out_image_counter != len(waypoints):
                     filename_base = simulation_identifier + "_frame_{}".format(
                         frame
                     )
-                    if in_lower_part_of_map:
-                        if (
-                            np.random.rand() > 0.1
-                        ):  # do not need that many files from validation set
-                            continue
-                        filename_base += "_validation_set"
+ 
                     # image
                     image_out_path = os.path.join(
                         data_folder, filename_base + ".png"
                     )
                     save_img(image_rgb, image_out_path)
+                    #semseg
+                    image_out_path = os.path.join(
+                        data_folder, filename_base + "_semseg.png"
+                    )
+                    save_img(image_semseg, image_out_path)
                     # label img
                     label_path = os.path.join(
                         data_folder, filename_base + "_label.png"
@@ -429,21 +437,13 @@ def main():
                         none_flags_list,
                         label_path,
                     )
-    
-                for center_list in centers_list:
-                    if center_list is not None:
-                        curvature = get_curvature(center_list)
-                        if curvature > 0.0005:
-                            min_jump, max_jump = 1, 2
-                        else:
-                            min_jump, max_jump = 5, 10
 
                 pygame.display.flip()
                 frame += 1
 
     finally:
 
-        print("destroying actors.")
+        print("\ndestroying actors.")
         for actor in actor_list:
             actor.destroy()
 
