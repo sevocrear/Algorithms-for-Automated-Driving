@@ -7,6 +7,7 @@
 # python -m code.solutions.lane_detection.collect_data
 
 import os
+from token import LEFTSHIFT
 import carla
 import random
 import pygame
@@ -33,7 +34,7 @@ from .seg_data_util import mkdir_if_not_exist
 
 store_files = True
 town_string = "Town03"
-cg = CameraGeometry()
+cg = CameraGeometry(height=1.5,pitch_deg = 5, image_width=1920, image_height= 1080, field_of_view_deg= 100)
 width = cg.image_width
 height = cg.image_height
 
@@ -176,6 +177,15 @@ def get_random_spawn_point(m):
 
 data_folder = os.path.join("code", "solutions", "lane_detection", "data")
 
+def get_waypoints(waypoints, waypoint, side = "left"):
+    if waypoint is not None and side == "left" and (waypoint.lane_change == carla.LaneChange.Left or waypoint.lane_change == carla.LaneChange.Both) and waypoint.lane_type == carla.LaneType.Driving:
+        waypoints.append(waypoint.get_left_lane())
+    elif waypoint is not None and side == "right" and waypoint.lane_type == carla.LaneType.Driving:
+        waypoints.append(waypoint.get_right_lane())
+    else:
+        return waypoints
+    waypoints = get_waypoints(waypoints, waypoints[-1], side = side)
+    return waypoints
 
 def main():
     mkdir_if_not_exist(data_folder)
@@ -318,10 +328,10 @@ def main():
                     project_to_road=True,
                     lane_type=carla.LaneType.Driving,
                 )
-                waypoint_right = waypoint.get_right_lane()
-                waypoint_left = waypoint.get_left_lane()
-                waypoints = [waypoint, waypoint_left, waypoint_right]
-                waypoints = list(filter(lambda x: x is not None and x.lane_type == carla.LaneType.Driving, waypoints))                # print(waypoint_left.lane_type, waypoint_right.lane_type, end = "\n\n")
+                waypoints = [waypoint]
+                waypoints = get_waypoints(waypoints, waypoint, side = "left")
+                waypoints = get_waypoints(waypoints, waypoint, side = "right")
+                waypoints = list(filter(lambda x: x is not None, waypoints))
                 centers_list = []
                 left_boundary_list = []
                 right_boundary_list = []
@@ -419,19 +429,7 @@ def main():
                         none_flags_list,
                         label_path,
                     )
-                    # # borders
-                    # border_array = np.hstack(
-                    #     (np.array(left_boundary), np.array(right_boundary))
-                    # )
-                    # border_path = os.path.join(
-                    #     data_folder, filename_base + "_boundary.txt"
-                    # )
-                    # np.savetxt(border_path, border_array)
-                    # # trafo
-                    # trafo_path = os.path.join(
-                    #     data_folder, filename_base + "_trafo.txt"
-                    # )
-                    # np.savetxt(trafo_path, trafo_matrix_global_to_camera)
+    
                 for center_list in centers_list:
                     if center_list is not None:
                         curvature = get_curvature(center_list)
